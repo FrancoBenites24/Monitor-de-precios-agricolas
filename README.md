@@ -1,120 +1,115 @@
-# Monitor de Precios Agrícolas
+# Monitor de precios agricolas de Piura
 
-Proyecto académico orientado al desarrollo de un agente de inteligencia artificial capaz de analizar información oficial sobre precios agrícolas en el Perú y generar alertas cuando se detecten variaciones relevantes.
+Prototipo academico alineado con el ODS 2: Hambre cero. Consulta un producto del dataset oficial del Mercado Modelo de Piura, compara sus dos precios mayoristas validos mas recientes y envia una alerta a Telegram cuando la variacion supera el umbral configurado.
 
-El proyecto se encuentra relacionado con el **ODS 2: Hambre Cero**.
+## Que esta listo
 
----
+- Dataset oficial incluido sin modificaciones.
+- Lectura, validacion y filtrado del CSV en Python.
+- Calculo local de la variacion porcentual.
+- Modelo local `gemma4:e2b-it-qat` servido por Ollama.
+- Redaccion limitada exclusivamente a los datos del analisis.
+- Integracion saliente con Telegram.
+- Docker Compose con descarga automatica y persistente del modelo.
+- Pruebas automaticas sin conexiones externas.
 
-## Objetivo del proyecto
+La aplicacion no es un chatbot general. La entrada solo se usa para buscar un producto en el CSV. Si el producto no existe, Ollama no recibe ninguna solicitud.
 
-Desarrollar una aplicación sencilla que permita consultar el precio de un producto agrícola utilizando información oficial de la Plataforma Nacional de Datos Abiertos del Perú.
+## Lo unico que debe configurar el compañero
 
-El sistema deberá:
+Abrir `.env` y completar:
 
-1. Leer información oficial de precios agrícolas.
-2. Permitir consultar un producto.
-3. Obtener sus precios registrados.
-4. Comparar el precio actual con un precio anterior.
-5. Calcular la variación porcentual.
-6. Detectar si existe una variación significativa.
-7. Utilizar inteligencia artificial para generar una alerta.
-8. Enviar la alerta automáticamente mediante una plataforma de mensajería.
+```dotenv
+TELEGRAM_BOT_TOKEN=token_entregado_por_BotFather
+TELEGRAM_CHAT_ID=identificador_del_chat
+```
 
-> El procesamiento y filtrado del archivo de datos debe realizarse mediante código.  
-> El archivo completo no será enviado al modelo de inteligencia artificial.
+No se debe cambiar ningun archivo Python.
 
----
+Para obtener el chat ID:
 
-# Alcance inicial
+1. Crear el bot con BotFather y copiar el token.
+2. Abrir el chat con el bot y enviar `/start`.
+3. Consultar `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+4. Copiar el valor numerico de `message.chat.id`.
 
-El proyecto será desarrollado como un **MVP (Producto Mínimo Viable)**.
+## Iniciar todo
 
-## El sistema sí hará
+Desde esta carpeta:
 
-- Trabajará con datos oficiales del Perú.
-- Leerá archivos de precios agrícolas.
-- Permitirá buscar un producto.
-- Obtendrá registros de precios.
-- Comparará precios.
-- Calculará la variación porcentual.
-- Detectará una variación significativa mediante un umbral definido.
-- Generará un mensaje mediante inteligencia artificial.
-- Enviará una alerta automáticamente.
+```powershell
+docker compose up --build
+```
 
-## El sistema no incluirá inicialmente
+En Windows tambien puede hacerse doble clic en `INICIAR.bat`. El archivo comprueba primero que las dos credenciales de Telegram esten completas.
 
-- Sistema de usuarios.
-- Login.
-- Base de datos propia.
-- Aplicación móvil.
-- Dashboard avanzado.
-- Predicción futura de precios.
-- Machine Learning.
-- WebSockets.
-- Precios actualizados cada segundo.
-- Scraping continuo.
-- Sistema de pagos.
+La primera ejecucion descarga `gemma4:e2b-it-qat`, de aproximadamente 4.3 GB. El modelo se conserva en el volumen `ollama_models`, por lo que no se vuelve a descargar al reconstruir la aplicacion.
 
-Estas características podrían incorporarse posteriormente, pero no forman parte del alcance inicial.
+Docker Compose realiza automaticamente este flujo:
 
----
+1. Inicia Ollama.
+2. Descarga o verifica el modelo.
+3. Inicia la aplicacion.
+4. Consulta `Papaya` con un umbral de 5%.
+5. Genera la alerta con Gemma.
+6. La valida y la envia a Telegram.
 
-# Fuente de datos
+## Caso de demostracion
 
-Los datos utilizados deberán provenir de la:
-
-**Plataforma Nacional de Datos Abiertos del Perú**
-
-Dataset inicialmente considerado:
-
-### Precios mayoristas y minoristas del Mercado Modelo de Piura
-
-Fuente:
-
-https://www.datosabiertos.gob.pe/
-
-El equipo deberá verificar el dataset definitivo y documentar:
-
-- nombre del dataset;
-- institución responsable;
-- URL oficial;
-- formato disponible;
-- fecha de actualización;
-- columnas existentes;
-- productos disponibles.
-
----
-
-# Flujo esperado
+La configuracion predeterminada usa datos reales:
 
 ```text
-Usuario
-   │
-   ▼
-Ingresa producto
-   │
-   ▼
-Procesamiento del dataset
-   │
-   ▼
-Obtención de precios
-   │
-   ▼
-Cálculo de variación
-   │
-   ▼
-¿Existe variación significativa?
-   │
-   ├── NO → mostrar resultado
-   │
-   └── SÍ
-        │
-        ▼
-   Agente de IA
-        │
-        ▼
- Generación de alerta
-        │
-        ▼
- Plataforma de mensajería
+Producto: Papaya
+Precio anterior: 2.20 el 11/03/2026
+Precio actual: 2.40 el 13/03/2026
+Variacion: +9.09%
+Umbral: 5.00%
+Resultado: alerta atipica
+```
+
+Para cambiar de producto, editar `DEMO_PRODUCT` en `.env`. Por ejemplo, `Aji escabeche` produce 0.00% con los dos registros mas recientes y no envia alerta.
+
+## Seguridad de la respuesta
+
+El programa aplica cuatro controles:
+
+1. Solo acepta productos que existan en el CSV.
+2. Calcula fechas, precios y porcentajes en Python.
+3. Envia a Gemma un solo JSON pequeno, nunca el CSV completo.
+4. Rechaza la respuesta del modelo si falta un dato obligatorio, agrega una causa o no usa el formato esperado. En ese caso utiliza una plantilla segura con los mismos datos.
+
+El token y el chat de Telegram nunca se entregan al modelo.
+
+## Pruebas
+
+Las pruebas usan la biblioteca estandar de Python y no necesitan Ollama, Docker ni Telegram:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+## Estructura
+
+```text
+app/
+  agent.py            flujo restringido y controles de salida
+  analysis.py         formula de variacion
+  config.py           variables de entorno
+  dataset.py          lectura y busqueda del CSV
+  ollama_client.py    llamada local al modelo
+  prompt.py           prompt de sistema
+  telegram_client.py  envio saliente
+  tool_schemas.py     cuatro herramientas JSON
+data/
+  mimercado_dataset.csv
+tests/
+Dockerfile
+docker-compose.yml
+INFORME_TECNICO.md
+```
+
+## Fuente
+
+Gobierno Regional Piura. Precios mayorista y minorista del Mercado Modelo de Piura:
+
+https://www.datosabiertos.gob.pe/dataset/precios-mayorista-y-minorista-del-mercado-modelo-de-piuragobierno-regional-piura-grp-0
