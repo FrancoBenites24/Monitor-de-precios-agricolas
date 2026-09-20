@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+import csv
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+import re
+import unicodedata
+
+from .domain import DataError, PriceRecord, RecentPrices
+
+
+REQUIRED_COLUMNS = {
+    "DEPARTAMENTO",
+    "FECHA_REGISTRO",
+    "PRODUCTO",
+    "PRECIO_MAYORISTA",
+    "CATEGORIA",
+    "UNIDAD_MEDIDA_MAY",
+}
+
+
+def normalize_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return re.sub(r"\s+", " ", without_accents.casefold()).strip()
+
+
+class PriceRepository:
+    def __init__(self, csv_path: Path, department: str = "PIURA") -> None:
+        self.csv_path = csv_path
+        self.department = department
+        self._records = self._load_records()
+        self._products = sorted(
+            {
+                record.product
+                for record in self._records
+                if normalize_text(record.department) == normalize_text(self.department)
+            },
+            key=normalize_text,
+        )
+
+    def _load_records(self) -> list[PriceRecord]:
+        if not self.csv_path.exists():
+            raise DataError(f"No se encontro el dataset: {self.csv_path}")
+
+        records: list[PriceRecord] = []
+        with self.csv_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            reader = csv.DictReader(csv_file)
+            columns = set(reader.fieldnames or [])
+            missing = sorted(REQUIRED_COLUMNS - columns)
+            if missing:
+                raise DataError(f"Faltan columnas obligatorias: {', '.join(missing)}")
+
+            for line_number, row in enumerate(reader, start=2):
+                try:
+                    registered_at = datetime.strptime(row["FECHA_REGISTRO"].strip(), "%Y%m%d").date()
+                    wholesale_price = Decimal(row["PRECIO_MAYORISTA"].strip())
+                except (ValueError, InvalidOperation, AttributeError) as exc:
+                    raise DataError(f"Fila {line_number} con fecha o precio invalido") from exc
+
+                product = row["PRODUCTO"].strip()
+                category = row["CATEGORIA"].strip()
+                department = row["DEPARTAMENTO"].strip()
+                unit = row["UNIDAD_MEDIDA_MAY"].strip()
+                if not all((product, category, department, unit)):
+                    raise DataError(f"Fila {line_number} con un campo obligatorio vacio")
+
+                records.append(
+                    PriceRecord(
+                        product=product,
+                        category=category,
+                        department=department,
+                        registered_at=registered_at,
+                        wholesale_price=wholesale_price,
+                        wholesale_unit=unit,
+                    )
+                )
+
+        if not records:
+            raise DataError("El dataset no contiene registros")
+        return records
+
+    @property
+    def row_count(self) -> int:
+        return len(self._records)
+
+    @property
+    def product_count(self) -> int:
+        return len(self._products)
+
+    def search_products(self, query: str, limit: int = 10) -> list[str]:
+        normalized_query = normalize_text(query)
+        if not normalized_query:
+            return []
+
+        exact = [product for product in self._products if normalize_text(product) == normalized_query]
+        if exact:
+            return exact
+
+        return [
+            product
+            for product in self._products
+            if normalized_query in normalize_text(product)
+        ][:limit]
+
+    def get_recent_prices(self, product: str) -> RecentPrices:
+        normalized_product = normalize_text(product)
+        valid = [
+            record
+            for record in self._records
+            if normalize_text(record.department) == normalize_text(self.department)
+            and normalize_text(record.product) == normalized_product
+            and record.wholesale_price > 0
+        ]
+        valid.sort(key=lambda record: record.registered_at)
+
+        if len(valid) < 2:
+            raise DataError(f"{product} no tiene dos precios mayoristas validos")
+
+        previous, current = valid[-2], valid[-1]
+        if normalize_text(previous.wholesale_unit) != normalize_text(current.wholesale_unit):
+            raise DataError(f"{product} tiene unidades incompatibles en sus dos registros recientes")
+
+        return RecentPrices(
+            product=current.product,
+            category=current.category,
+            department=current.department,
+            previous=previous,
+            current=current,
+        )
