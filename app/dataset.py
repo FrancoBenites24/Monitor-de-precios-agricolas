@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import calendar
 import csv
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import re
@@ -89,6 +90,10 @@ class PriceRepository:
     def product_count(self) -> int:
         return len(self._products)
 
+    @property
+    def products(self) -> tuple[str, ...]:
+        return tuple(self._products)
+
     def search_products(self, query: str, limit: int = 10) -> list[str]:
         normalized_query = normalize_text(query)
         if not normalized_query:
@@ -98,13 +103,10 @@ class PriceRepository:
         if exact:
             return exact
 
-        return [
-            product
-            for product in self._products
-            if normalized_query in normalize_text(product)
-        ][:limit]
+        pattern = re.compile(rf"(?<!\w){re.escape(normalized_query)}(?!\w)")
+        return [product for product in self._products if pattern.search(normalize_text(product))][:limit]
 
-    def get_recent_prices(self, product: str) -> RecentPrices:
+    def _valid_records(self, product: str) -> list[PriceRecord]:
         normalized_product = normalize_text(product)
         valid = [
             record
@@ -114,6 +116,33 @@ class PriceRepository:
             and record.wholesale_price > 0
         ]
         valid.sort(key=lambda record: record.registered_at)
+        return valid
+
+    def get_latest_price(self, product: str) -> PriceRecord:
+        valid = self._valid_records(product)
+        if not valid:
+            raise DataError(f"{product} no tiene precios mayoristas validos")
+        return valid[-1]
+
+    def get_history(self, product: str, months: int | None = None) -> list[PriceRecord]:
+        valid = self._valid_records(product)
+        if not valid:
+            raise DataError(f"{product} no tiene precios mayoristas validos")
+        if months is None:
+            return valid
+        if months < 1 or months > 60:
+            raise DataError("La consulta historica admite entre 1 y 60 meses")
+
+        latest = valid[-1].registered_at
+        month_index = latest.year * 12 + latest.month - 1 - months
+        cutoff_year, cutoff_month_index = divmod(month_index, 12)
+        cutoff_month = cutoff_month_index + 1
+        cutoff_day = min(latest.day, calendar.monthrange(cutoff_year, cutoff_month)[1])
+        cutoff = date(cutoff_year, cutoff_month, cutoff_day)
+        return [record for record in valid if record.registered_at >= cutoff]
+
+    def get_recent_prices(self, product: str) -> RecentPrices:
+        valid = self._valid_records(product)
 
         if len(valid) < 2:
             raise DataError(f"{product} no tiene dos precios mayoristas validos")

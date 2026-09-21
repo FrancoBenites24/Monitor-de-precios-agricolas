@@ -24,7 +24,7 @@ class DatasetTests(unittest.TestCase):
     def test_partial_search_can_be_ambiguous(self) -> None:
         self.assertEqual(
             self.repository.search_products("papa"),
-            ["Papa amarilla", "Papa canchan", "Papaya"],
+            ["Papa amarilla", "Papa canchan"],
         )
 
     def test_papaya_uses_two_latest_valid_prices(self) -> None:
@@ -41,6 +41,14 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(result.variation_pct, Decimal("9.09"))
         self.assertTrue(result.is_atypical)
         self.assertEqual(result.direction, "SUBIO")
+
+    def test_history_summary_uses_available_period(self) -> None:
+        records = self.repository.get_history("Papaya")
+        summary = PriceAnalyzer().summarize_history(records)
+        self.assertEqual(summary["fecha_inicio"], "2024-01-08")
+        self.assertEqual(summary["fecha_fin"], "2026-03-13")
+        self.assertIn("2024", summary["promedios_anuales"])
+        self.assertIn("2026", summary["promedios_anuales"])
 
 
 if __name__ == "__main__":

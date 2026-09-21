@@ -15,12 +15,5 @@ if errorlevel 1 (
   exit /b 1
 )
 
-findstr /B /C:"TELEGRAM_CHAT_ID=" .env | findstr /V /R /C:"^TELEGRAM_CHAT_ID=$" >nul
-if errorlevel 1 (
-  echo Completa TELEGRAM_CHAT_ID en el archivo .env.
-  pause
-  exit /b 1
-)
-
 docker compose up --build
 pause

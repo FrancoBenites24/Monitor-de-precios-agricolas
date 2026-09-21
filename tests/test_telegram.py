@@ -50,6 +50,30 @@ class TelegramTests(unittest.TestCase):
         self.assertEqual(first["estado"], "SIMULADA")
         self.assertEqual(second["estado"], "DUPLICADA_OMITIDA")
 
+    def test_long_polling_uses_offset_and_message_updates_only(self) -> None:
+        requests = []
+
+        def fake_transport(url, data, timeout):
+            requests.append((url, data.decode("utf-8"), timeout))
+            return {"ok": True, "result": [{"update_id": 9, "message": {}}]}
+
+        client = TelegramClient("secret-token", transport=fake_transport)
+        updates = client.get_updates(8, 25)
+        self.assertEqual(updates[0]["update_id"], 9)
+        self.assertIn("offset=8", requests[0][1])
+        self.assertIn("allowed_updates", requests[0][1])
+        self.assertEqual(requests[0][2], 35)
+
+    def test_startup_removes_webhook_and_registers_commands(self) -> None:
+        methods = []
+
+        def fake_transport(url, data, timeout):
+            methods.append(url.rsplit("/", 1)[-1])
+            return {"ok": True, "result": True}
+
+        TelegramClient("secret-token", transport=fake_transport).prepare_long_polling()
+        self.assertEqual(methods, ["deleteWebhook", "setMyCommands"])
+
 
 if __name__ == "__main__":
     unittest.main()

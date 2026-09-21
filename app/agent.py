@@ -95,7 +95,7 @@ class PriceMonitorAgent:
         self.ollama = ollama
         self.telegram = telegram
 
-    # Estas cuatro funciones son las herramientas reales descritas por los
+    # Estas funciones corresponden al flujo de alerta descrito por los
     # esquemas JSON de app/tool_schemas.py.
     def buscar_productos(self, consulta: str) -> list[str]:
         return self.repository.search_products(consulta)

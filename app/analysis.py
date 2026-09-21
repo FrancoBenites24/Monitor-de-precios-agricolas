@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 
-from .domain import AnalysisResult, RecentPrices
+from .domain import AnalysisResult, PriceRecord, RecentPrices
 
 
 TWO_DECIMALS = Decimal("0.01")
@@ -50,3 +50,56 @@ class PriceAnalyzer:
             threshold_pct=threshold_pct.quantize(TWO_DECIMALS, rounding=ROUND_HALF_UP),
             is_atypical=abs(raw_variation) >= threshold_pct,
         )
+
+    def summarize_history(self, records: list[PriceRecord]) -> dict[str, object]:
+        if not records:
+            raise ValueError("No existen registros para resumir")
+
+        ordered = sorted(records, key=lambda record: record.registered_at)
+        units = {record.wholesale_unit for record in ordered}
+        if len(units) != 1:
+            raise ValueError("El historial contiene unidades incompatibles")
+
+        first = ordered[0]
+        last = ordered[-1]
+        minimum = min(ordered, key=lambda record: record.wholesale_price)
+        maximum = max(ordered, key=lambda record: record.wholesale_price)
+        average = (
+            sum((record.wholesale_price for record in ordered), Decimal("0"))
+            / Decimal(len(ordered))
+        ).quantize(TWO_DECIMALS, rounding=ROUND_HALF_UP)
+        variation = (
+            (last.wholesale_price - first.wholesale_price)
+            / first.wholesale_price
+            * Decimal("100")
+        ).quantize(TWO_DECIMALS, rounding=ROUND_HALF_UP)
+
+        yearly: dict[int, list[Decimal]] = {}
+        for record in ordered:
+            yearly.setdefault(record.registered_at.year, []).append(record.wholesale_price)
+        yearly_averages = {
+            str(year): float(
+                (sum(values, Decimal("0")) / Decimal(len(values))).quantize(
+                    TWO_DECIMALS, rounding=ROUND_HALF_UP
+                )
+            )
+            for year, values in sorted(yearly.items())
+        }
+
+        return {
+            "producto": last.product,
+            "unidad": last.wholesale_unit,
+            "cantidad_registros": len(ordered),
+            "fecha_inicio": first.registered_at.isoformat(),
+            "fecha_fin": last.registered_at.isoformat(),
+            "precio_inicial": float(first.wholesale_price),
+            "precio_final": float(last.wholesale_price),
+            "precio_minimo": float(minimum.wholesale_price),
+            "fecha_minimo": minimum.registered_at.isoformat(),
+            "precio_maximo": float(maximum.wholesale_price),
+            "fecha_maximo": maximum.registered_at.isoformat(),
+            "precio_promedio": float(average),
+            "variacion_periodo": float(variation),
+            "promedios_anuales": yearly_averages,
+            "fuente": "Gobierno Regional Piura - Mercado Modelo de Piura",
+        }
