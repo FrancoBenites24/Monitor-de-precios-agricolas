@@ -44,8 +44,24 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "consultar_historial",
+            "description": "Resume precios mayoristas historicos de un producto entre 1 y 60 meses.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "producto": {"type": "string"},
+                    "meses": {"type": ["integer", "null"], "minimum": 1, "maximum": 60},
+                },
+                "required": ["producto", "meses"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "enviar_alerta_telegram",
-            "description": "Envia una alerta validada como atipica al chat configurado.",
+            "description": "Envia una alerta validada como atipica al chat de Telegram del usuario.",
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -76,6 +76,68 @@ class OllamaClient:
             raise OllamaError("Ollama no genero el campo mensaje")
         return generated.strip()
 
+    def classify_question(self, question: str, products: tuple[str, ...]) -> dict[str, object]:
+        allowed_intents = [
+            "PRECIO",
+            "VARIACION",
+            "HISTORIAL",
+            "PRODUCTOS",
+            "ALERTA",
+            "AYUDA",
+            "FUERA_DE_ALCANCE",
+        ]
+        payload = {
+            "model": self.model,
+            "stream": False,
+            "think": False,
+            "keep_alive": "10m",
+            "options": {"temperature": 0, "num_ctx": 2048, "num_predict": 120},
+            "format": {
+                "type": "object",
+                "properties": {
+                    "intencion": {"type": "string", "enum": allowed_intents},
+                    "producto": {"type": ["string", "null"]},
+                    "meses": {"type": ["integer", "null"], "minimum": 1, "maximum": 60},
+                    "umbral": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+                },
+                "required": ["intencion", "producto", "meses", "umbral"],
+                "additionalProperties": False,
+            },
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Clasifica preguntas para un bot de precios agricolas. "
+                        "No respondas la pregunta. Devuelve solamente el JSON solicitado. "
+                        "El producto debe ser uno de la lista o null. Los temas ajenos son "
+                        "FUERA_DE_ALCANCE."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"pregunta": question, "productos_permitidos": list(products)},
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+        }
+        response = self._transport(
+            f"{self.base_url}/api/chat",
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            self.timeout_seconds,
+        )
+        message = response.get("message")
+        if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+            raise OllamaError("Ollama no pudo clasificar la consulta")
+        try:
+            parsed = json.loads(message["content"])
+        except json.JSONDecodeError as exc:
+            raise OllamaError("Ollama devolvio una clasificacion invalida") from exc
+        if not isinstance(parsed, dict) or parsed.get("intencion") not in allowed_intents:
+            raise OllamaError("Ollama devolvio una intencion no permitida")
+        return parsed
+
     @staticmethod
     def _post_json(url: str, data: bytes, timeout: int) -> dict[str, object]:
         http_request = request.Request(

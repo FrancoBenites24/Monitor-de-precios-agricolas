@@ -2,99 +2,94 @@
 
 ## Alcance y objetivo
 
-El sistema apoya la observacion de variaciones recientes de precios agricolas del Mercado Modelo de Piura. Se alinea con el ODS 2: Hambre cero al facilitar la consulta de informacion oficial vinculada con alimentos. No predice precios ni explica sus causas.
+El sistema es un bot conversacional de Telegram para consultar precios mayoristas del Mercado Modelo de Piura. Se alinea con el ODS 2: Hambre cero al facilitar el acceso a informacion oficial sobre alimentos. No predice precios, no recomienda compras o ventas y no explica causas que el dataset no contiene.
 
-La fuente es el dataset de precios mayoristas y minoristas publicado por el Gobierno Regional Piura en la Plataforma Nacional de Datos Abiertos del Peru. El prototipo usa `PRECIO_MAYORISTA`, procesa el CSV internamente y no entrega el archivo completo al modelo.
+La fuente es el dataset publicado por el Gobierno Regional Piura en la Plataforma Nacional de Datos Abiertos del Peru. La aplicacion procesa localmente `PRECIO_MAYORISTA`; nunca envia el CSV completo al modelo.
 
 ## 1. Arquitectura general del asistente
 
 ```text
-Producto configurado
+Usuario en Telegram
         |
         v
-Busqueda y validacion del CSV
+Telegram Bot API (long polling)
         |
         v
-Calculo local de la variacion
+Interprete de comandos e intenciones
         |
-        +---- variacion normal ----> resultado sin envio
+        +--> precio / variacion / historial / productos
+        |           |
+        |           `--> calculo local sobre el CSV
         |
-        `---- variacion atipica ---> Ollama + Gemma 4 E2B
-                                           |
-                                           v
-                                  validacion del mensaje
-                                           |
-                                           v
-                                         Telegram
+        `--> consulta ambigua --> Ollama + Gemma 4 E2B
+                                      |
+                                      `--> intencion JSON validada
+        |
+        v
+Respuesta en el mismo chat
 ```
 
-La interfaz central es la API local de Ollama. El modelo seleccionado es `gemma4:e2b-it-qat` porque la tarea solo requiere redactar un mensaje corto a partir de datos ya calculados. La aplicacion usa un flujo cerrado en Python para evitar que el modelo responda preguntas generales o modifique reglas de negocio.
+La interfaz principal es Telegram y la API local de Ollama es el nucleo de IA. `gemma4:e2b-it-qat` se usa para clasificar preguntas que no coinciden con reglas directas y para redactar una alerta atipica. Python conserva el control del flujo y de todos los calculos.
 
-Ollama y la aplicacion se ejecutan en servicios separados de Docker Compose. El modelo se guarda en un volumen persistente. Esta division permite actualizar el codigo sin volver a descargar los pesos y mantiene la aplicacion Python sin dependencias externas.
+Se eligio long polling porque no necesita dominio, certificado ni webhook. Docker Compose ejecuta la aplicacion y Ollama en servicios separados, descarga el modelo automaticamente y lo conserva en un volumen.
 
 ## 2. Diseño del prompt de sistema
 
-El prompt se encuentra en `app/prompt.py` y define:
+El prompt de alertas esta en `app/prompt.py`. Define al modelo como redactor del Monitor de Precios Agricolas de Piura y le exige:
 
-- rol: redactor del Monitor de Precios Agricolas de Piura;
-- objetivo: redactar una alerta factual de un solo parrafo;
-- limites: utilizar exclusivamente el JSON calculado;
-- informacion ambigua: el modelo no participa hasta que el producto sea unico y los datos sean validos;
-- prohibiciones: inventar cifras, fechas, unidades, causas o recomendaciones;
-- tono: institucional, neutral y breve;
-- formato: JSON con una sola propiedad `mensaje`.
+- usar exclusivamente el JSON calculado;
+- no agregar productos, cifras, fechas, unidades o lugares;
+- no suponer causas como clima, escasez, oferta o demanda;
+- no dar recomendaciones comerciales;
+- mantener un tono institucional y breve;
+- responder en un objeto JSON con un solo mensaje.
 
-El modelo nunca recibe el texto como una conversacion abierta. La aplicacion le entrega solamente el contrato del analisis cuando `es_atipica=true`.
+La clasificacion de preguntas tiene otro contrato cerrado: solo puede devolver `PRECIO`, `VARIACION`, `HISTORIAL`, `PRODUCTOS`, `ALERTA`, `AYUDA` o `FUERA_DE_ALCANCE`, junto con un producto de la lista oficial. El texto generado durante la clasificacion nunca se muestra al usuario.
 
 ## 3. Definicion de herramientas
 
-Los esquemas completos estan en `app/tool_schemas.py`. Se definieron cuatro funciones en notacion de objetos JavaScript:
+Los cinco esquemas JSON se encuentran en `app/tool_schemas.py`:
 
-1. `buscar_productos(consulta)`: limita la entrada a nombres presentes en el dataset.
-2. `obtener_precios_recientes(producto)`: selecciona los dos precios mayoristas positivos mas recientes.
+1. `buscar_productos(consulta)`: busca nombres validos en el dataset.
+2. `obtener_precios_recientes(producto)`: selecciona los dos registros mayoristas positivos mas recientes.
 3. `evaluar_variacion(producto, umbral_porcentual)`: calcula el porcentaje y determina si es atipico.
-4. `enviar_alerta_telegram(analysis_id, mensaje)`: envia exclusivamente un analisis validado.
+4. `consultar_historial(producto, meses)`: resume entre 1 y 60 meses o todo el periodo disponible.
+5. `enviar_alerta_telegram(analysis_id, mensaje)`: envia una alerta previamente validada.
 
-Cada esquema declara nombre, descripcion, parametros obligatorios y `additionalProperties=false`. El token y el chat de Telegram no son parametros de una herramienta; se leen desde el entorno y nunca se muestran al modelo.
+Cada esquema declara nombre, descripcion, parametros obligatorios y `additionalProperties=false`. El token de Telegram se obtiene del entorno y no forma parte de las herramientas del modelo.
 
 ## 4. Diseño del flujo de interaccion
 
-1. La aplicacion recibe el nombre configurado en `DEMO_PRODUCT` o mediante `--producto`.
-2. Ejecuta `buscar_productos` sin llamar al modelo.
-3. Si no existe coincidencia, termina con `PRODUCTO_NO_ENCONTRADO`.
-4. Si existen varias coincidencias, devuelve sus nombres y no llama al modelo.
-5. Para una coincidencia unica, ejecuta `obtener_precios_recientes`.
-6. Excluye precios mayoristas menores o iguales a cero y verifica la unidad.
-7. Ejecuta `evaluar_variacion` con la formula `((actual - anterior) / anterior) * 100`.
-8. Si la variacion no supera el umbral, informa el resultado sin usar IA ni Telegram.
-9. Si es atipica, envia a Gemma solamente el JSON del analisis.
-10. Valida que la respuesta contenga todos los datos y no incluya causas o recomendaciones.
-11. Si la respuesta no es valida, la reemplaza por una plantilla segura y registra el origen.
-12. Ejecuta `enviar_alerta_telegram` y muestra el estado final.
+1. El usuario abre el bot y escribe un comando o una pregunta natural.
+2. Python detecta primero comandos y expresiones conocidas.
+3. Si la intencion no es clara, Gemma devuelve solamente una clasificacion JSON.
+4. El sistema valida que el producto exista en el CSV.
+5. Si existen varias coincidencias, el bot muestra opciones y pide el nombre completo.
+6. Si la pregunta es ajena al dataset, responde con un texto fijo de ayuda.
+7. Para `PRECIO`, obtiene el registro mayorista valido mas reciente.
+8. Para `VARIACION`, compara los dos registros recientes y calcula el porcentaje.
+9. Para `HISTORIAL`, calcula promedio, minimo, maximo, variacion y promedios anuales.
+10. Para `ALERTA`, aplica el umbral y solicita a Gemma una redaccion solo si el cambio es atipico.
+11. La alerta se valida; si contiene datos no permitidos, se reemplaza por una plantilla segura.
+12. Telegram devuelve el resultado en el mismo chat del usuario.
 
-La automatizacion visible exigida es la llegada del mensaje al chat de Telegram durante la exposicion.
+Comandos: `/precio`, `/variacion`, `/historial`, `/alerta`, `/productos` y `/ayuda`.
 
 ## 5. Consideraciones de riesgo y etica
 
 | Riesgo | Mitigacion aplicada |
 |---|---|
-| Precios iguales a cero en la fuente | Se excluyen antes de seleccionar los dos registros recientes. |
-| Respuesta inventada por el modelo | Se valida cada dato obligatorio y se bloquean explicaciones causales. |
-| Consulta ajena al dataset | Se trata como busqueda de producto; si no coincide, la IA no se ejecuta. |
-| Exposicion de credenciales | Token y chat permanecen en `.env`, fuera de Git y fuera del prompt. |
-| Alertas duplicadas | Se conserva el identificador del analisis durante la ejecucion y se omite un segundo envio. |
-| Interpretacion del umbral como norma oficial | El README lo identifica como un criterio configurable del prototipo. |
+| Precios iguales a cero | Se excluyen antes de seleccionar o resumir registros. |
+| Respuesta ajena al dataset | Las intenciones y los productos usan listas cerradas. |
+| Cifras o causas inventadas | Los calculos se hacen en Python y la alerta generada se valida. |
+| Exposicion de credenciales | El token permanece en `.env`, fuera de Git y del prompt. |
+| Consulta ambigua | El bot muestra las coincidencias y solicita el nombre completo. |
+| Umbral interpretado como norma oficial | Se documenta como criterio configurable del prototipo. |
+| Historial confundido con precio al productor | Cada respuesta lo identifica como precio mayorista del Mercado Modelo de Piura. |
 
-## Evidencia para la demostracion
+## Utilidad para el agricultor
 
-Con `Papaya` y un umbral de 5% el dataset devuelve:
-
-- 11/03/2026: 2.20 por KILOGRAMO;
-- 13/03/2026: 2.40 por KILOGRAMO;
-- variacion: +9.09%;
-- clasificacion: atipica.
-
-Esta informacion se obtiene durante la ejecucion; no esta fijada como resultado dentro del codigo.
+Desde su celular, el usuario puede consultar el ultimo precio publicado, observar la variacion reciente, revisar estadisticas historicas y evaluar cambios atipicos. La informacion funciona como referencia mayorista para seguimiento y negociacion, no como precio garantizado en chacra.
 
 ## Fuente oficial
 

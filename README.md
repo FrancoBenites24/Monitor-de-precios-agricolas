@@ -1,88 +1,84 @@
 # Monitor de precios agricolas de Piura
 
-Prototipo academico alineado con el ODS 2: Hambre cero. Consulta un producto del dataset oficial del Mercado Modelo de Piura, compara sus dos precios mayoristas validos mas recientes y envia una alerta a Telegram cuando la variacion supera el umbral configurado.
+Bot conversacional de Telegram para consultar precios mayoristas del Mercado Modelo de Piura. Usa el dataset oficial, calcula todos los resultados en Python y emplea `gemma4:e2b-it-qat` mediante Ollama solamente para clasificar preguntas ambiguas y redactar alertas.
 
-## Que esta listo
-
-- Dataset oficial incluido sin modificaciones.
-- Lectura, validacion y filtrado del CSV en Python.
-- Calculo local de la variacion porcentual.
-- Modelo local `gemma4:e2b-it-qat` servido por Ollama.
-- Redaccion limitada exclusivamente a los datos del analisis.
-- Integracion saliente con Telegram.
-- Docker Compose con descarga automatica y persistente del modelo.
-- Pruebas automaticas sin conexiones externas.
-
-La aplicacion no es un chatbot general. La entrada solo se usa para buscar un producto en el CSV. Si el producto no existe, Ollama no recibe ninguna solicitud.
+El bot esta limitado al dataset agricola. No responde preguntas generales, no predice precios y no inventa causas para una variacion.
 
 ## Lo unico que debe configurar el compañero
 
-Abrir `.env` y completar:
+1. Crear el bot con `@BotFather` usando `/newbot`.
+2. Copiar `.env.example` como `.env`.
+3. Pegar el token:
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=token_entregado_por_BotFather
-TELEGRAM_CHAT_ID=identificador_del_chat
 ```
 
-No se debe cambiar ningun archivo Python.
+No necesita `chat_id`, dominio, webhook ni una clave de OpenAI.
 
-Para obtener el chat ID:
+## Desplegar
 
-1. Crear el bot con BotFather y copiar el token.
-2. Abrir el chat con el bot y enviar `/start`.
-3. Consultar `https://api.telegram.org/bot<TOKEN>/getUpdates`.
-4. Copiar el valor numerico de `message.chat.id`.
-
-## Iniciar todo
-
-Desde esta carpeta:
+En Windows puede hacer doble clic en `INICIAR.bat`. Tambien puede ejecutar:
 
 ```powershell
 docker compose up --build
 ```
 
-En Windows tambien puede hacerse doble clic en `INICIAR.bat`. El archivo comprueba primero que las dos credenciales de Telegram esten completas.
+Docker inicia Ollama, descarga `gemma4:e2b-it-qat`, registra el menu de comandos de Telegram y mantiene el bot escuchando mediante long polling. La primera descarga del modelo es de aproximadamente 4.3 GB y se conserva en el volumen `ollama_models`.
 
-La primera ejecucion descarga `gemma4:e2b-it-qat`, de aproximadamente 4.3 GB. El modelo se conserva en el volumen `ollama_models`, por lo que no se vuelve a descargar al reconstruir la aplicacion.
+Despues del despliegue, el usuario abre el bot en Telegram, presiona **Iniciar** y conversa en ese mismo chat.
 
-Docker Compose realiza automaticamente este flujo:
+## Consultas disponibles
 
-1. Inicia Ollama.
-2. Descarga o verifica el modelo.
-3. Inicia la aplicacion.
-4. Consulta `Papaya` con un umbral de 5%.
-5. Genera la alerta con Gemma.
-6. La valida y la envia a Telegram.
-
-## Caso de demostracion
-
-La configuracion predeterminada usa datos reales:
+El usuario puede escribir preguntas sencillas:
 
 ```text
-Producto: Papaya
-Precio anterior: 2.20 el 11/03/2026
-Precio actual: 2.40 el 13/03/2026
-Variacion: +9.09%
-Umbral: 5.00%
-Resultado: alerta atipica
+¿Cuanto cuesta la papaya?
+¿La papaya subio o bajo?
+Muestrame el historial del limon
+Historial de papaya en los ultimos 12 meses
+Avisame si la papaya cambia mas de 5%
+¿Que productos tienes?
 ```
 
-Para cambiar de producto, editar `DEMO_PRODUCT` en `.env`. Por ejemplo, `Aji escabeche` produce 0.00% con los dos registros mas recientes y no envia alerta.
+Tambien dispone de comandos exactos:
 
-## Seguridad de la respuesta
+```text
+/precio Papaya
+/variacion Papaya
+/historial Papaya 12
+/alerta Papaya 5
+/productos
+/ayuda
+```
 
-El programa aplica cuatro controles:
+`/historial` acepta entre 1 y 60 meses. Si no se indica la cantidad, resume todo el periodo disponible del producto.
 
-1. Solo acepta productos que existan en el CSV.
-2. Calcula fechas, precios y porcentajes en Python.
-3. Envia a Gemma un solo JSON pequeno, nunca el CSV completo.
-4. Rechaza la respuesta del modelo si falta un dato obligatorio, agrega una causa o no usa el formato esperado. En ese caso utiliza una plantilla segura con los mismos datos.
+## Respuestas del bot
 
-El token y el chat de Telegram nunca se entregan al modelo.
+- **Precio:** ultimo precio mayorista, unidad y fecha.
+- **Variacion:** comparacion de los dos registros validos mas recientes.
+- **Historial:** periodo, cantidad de registros, promedio, minimo, maximo, variacion y promedios por ano.
+- **Alerta:** compara la variacion con el umbral. Gemma redacta el mensaje solo cuando el cambio es atipico.
+- **Productos:** lista de los 51 productos disponibles.
+
+Si una consulta coincide con varios productos, el bot muestra opciones. Por ejemplo, `precio de papa` solicita elegir entre `Papa amarilla` y `Papa canchan`.
+
+## Limites de la IA
+
+La entrada pasa por estas protecciones:
+
+1. Los comandos y preguntas frecuentes se interpretan directamente en Python.
+2. Gemma solo clasifica una pregunta cuando la intencion no es evidente.
+3. La clasificacion solo admite intenciones conocidas y productos del CSV.
+4. Una consulta ajena devuelve un mensaje fijo con `/ayuda`.
+5. Fechas, precios, promedios y variaciones se calculan en Python.
+6. El CSV completo y el token de Telegram nunca se envian al modelo.
+7. Una alerta generada por Gemma se valida; si agrega datos o causas, se reemplaza por una plantilla segura.
 
 ## Pruebas
 
-Las pruebas usan la biblioteca estandar de Python y no necesitan Ollama, Docker ni Telegram:
+No requieren Ollama ni Telegram:
 
 ```powershell
 python -m unittest discover -s tests -v
@@ -92,14 +88,15 @@ python -m unittest discover -s tests -v
 
 ```text
 app/
-  agent.py            flujo restringido y controles de salida
-  analysis.py         formula de variacion
-  config.py           variables de entorno
-  dataset.py          lectura y busqueda del CSV
-  ollama_client.py    llamada local al modelo
-  prompt.py           prompt de sistema
-  telegram_client.py  envio saliente
-  tool_schemas.py     cuatro herramientas JSON
+  bot_main.py          inicio del bot
+  bot_runner.py        recepcion por long polling
+  chatbot.py           respuestas del chat
+  intent.py            comandos y preguntas naturales
+  dataset.py           lectura y consulta del CSV
+  analysis.py          calculos deterministas
+  ollama_client.py     clasificacion y redaccion local
+  telegram_client.py   Telegram Bot API
+  tool_schemas.py      herramientas JSON
 data/
   mimercado_dataset.csv
 tests/

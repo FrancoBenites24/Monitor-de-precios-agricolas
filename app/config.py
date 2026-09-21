@@ -47,6 +47,7 @@ class Settings:
     telegram_bot_token: str
     telegram_chat_id: str
     telegram_timeout_seconds: int
+    telegram_poll_timeout_seconds: int
     dry_run: bool
     demo_product: str
 
@@ -69,6 +70,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
     try:
         ollama_timeout = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120"))
         telegram_timeout = int(os.getenv("TELEGRAM_TIMEOUT_SECONDS", "20"))
+        telegram_poll_timeout = int(os.getenv("TELEGRAM_POLL_TIMEOUT_SECONDS", "25"))
     except ValueError as exc:
         raise ConfigurationError("Los tiempos de espera deben ser numeros enteros") from exc
 
@@ -81,6 +83,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
         telegram_timeout_seconds=telegram_timeout,
+        telegram_poll_timeout_seconds=telegram_poll_timeout,
         dry_run=_as_bool(os.getenv("DRY_RUN", "true")),
         demo_product=os.getenv("DEMO_PRODUCT", "Papaya").strip() or "Papaya",
     )

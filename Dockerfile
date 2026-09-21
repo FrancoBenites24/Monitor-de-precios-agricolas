@@ -12,4 +12,4 @@ COPY --chown=monitor:monitor data/ ./data/
 
 USER monitor
 
-CMD ["python", "-m", "app.main"]
+CMD ["python", "-m", "app.bot_main"]
